@@ -1,425 +1,448 @@
 'use client';
 
-import React, { useEffect } from 'react';
-import { Wifi, WifiOff, Battery, Signal, Settings, CheckCircle, AlertTriangle } from 'lucide-react';
-import LanguageSelector from '@/components/voting/language-selector';
-import AadhaarAuth from '@/components/voting/aadhaar-auth';
-import BallotView from '@/components/voting/ballot-view';
-import VoteConfirmation from '@/components/voting/vote-confirmation';
-import Results from '@/components/voting/results';
-import SystemStatus from '@/components/system/system-status';
-import { useVotingStore, useAuth, useElections, useVoting, useSystem, useUI } from '@/store/voting-store';
-import { VotingStep, SupportedLanguage } from '@/types';
-import { cn } from '@/utils/cn';
+import React, { useEffect, useState } from 'react';
+import { CurrencyPairCard } from '@/components/forex/CurrencyPairCard';
+import { TradingChart } from '@/components/forex/TradingChart';
+import { TechnicalIndicators } from '@/components/forex/TechnicalIndicators';
+import { TradingPanel } from '@/components/forex/TradingPanel';
+import useForexStore from '@/store/forexStore';
+import { 
+  fetchCurrencyPairs, 
+  fetchHistoricalData, 
+  fetchMarketNews,
+  startRealTimeUpdates 
+} from '@/utils/forexApi';
+import { generateTechnicalSignals } from '@/utils/forexUtils';
+import { Trade, MarketNews } from '@/types/forex';
+import { 
+  Wallet, 
+  TrendingUp, 
+  TrendingDown, 
+  Activity,
+  News,
+  Settings,
+  RefreshCw
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
 
-export default function VotingApp() {
-  const { 
-    isAuthenticated, 
-    login, 
-    voter 
-  } = useAuth();
-  
+export default function ForexDashboard() {
   const {
-    currentElection,
-    fetchElections,
-    selectElection
-  } = useElections();
-  
-  const {
-    voteConfirmation,
-    clearVotingState
-  } = useVoting();
-  
-  const {
-    status,
-    checkConnectivity,
-    syncData
-  } = useSystem();
-  
-  const {
-    currentStep,
-    setCurrentStep,
-    language,
-    setLanguage,
-    accessibility,
-    updateAccessibility,
+    currencyPairs,
+    selectedPair,
+    historicalData,
+    technicalIndicators,
+    trades,
+    portfolio,
+    marketNews,
+    isLoading,
     error,
-    success,
-    clearMessages
-  } = useUI();
+    updateCurrencyPairs,
+    setSelectedPair,
+    updateHistoricalData,
+    addTrade,
+    updatePortfolio,
+    setMarketNews,
+    setLoading,
+    setError,
+    resetError
+  } = useForexStore();
 
-  // Initialize app
+  const [activeTab, setActiveTab] = useState<'chart' | 'news' | 'trades'>('chart');
+  const [showSettings, setShowSettings] = useState(false);
+
+  const selectedPairData = currencyPairs.find(pair => pair.symbol === selectedPair);
+
+  // Load initial data
   useEffect(() => {
-    checkConnectivity();
-    if (isAuthenticated) {
-      fetchElections();
-    }
-  }, [isAuthenticated, checkConnectivity, fetchElections]);
+    const loadInitialData = async () => {
+      setLoading(true);
+      resetError();
+      
+      try {
+        // Load currency pairs
+        const pairs = await fetchCurrencyPairs();
+        updateCurrencyPairs(pairs);
 
-  // Auto-sync when coming online
+        // Load historical data for selected pair
+        const historical = await fetchHistoricalData(selectedPair);
+        updateHistoricalData(historical);
+
+        // Load market news
+        const news = await fetchMarketNews();
+        setMarketNews(news);
+
+        toast.success('Market data loaded successfully');
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load market data';
+        setError(errorMessage);
+        toast.error(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadInitialData();
+  }, []);
+
+  // Load historical data when selected pair changes
   useEffect(() => {
-    if (status.isOnline) {
-      syncData();
-    }
-  }, [status.isOnline, syncData]);
+    const loadHistoricalData = async () => {
+      if (!selectedPair) return;
+      
+      setLoading(true);
+      try {
+        const historical = await fetchHistoricalData(selectedPair);
+        updateHistoricalData(historical);
+        
+        // Generate technical signals
+        const signals = generateTechnicalSignals(historical);
+        // Update technical indicators in store would need to be implemented
+      } catch (err) {
+        console.error('Failed to load historical data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const handleLanguageSelect = (selectedLanguage: SupportedLanguage) => {
-    setLanguage(selectedLanguage);
-    setCurrentStep(VotingStep.AUTHENTICATION);
+    loadHistoricalData();
+  }, [selectedPair]);
+
+  // Start real-time updates
+  useEffect(() => {
+    const stopUpdates = startRealTimeUpdates((pairs) => {
+      updateCurrencyPairs(pairs);
+      updatePortfolio(); // Recalculate portfolio based on current prices
+    }, 5000);
+
+    return stopUpdates;
+  }, []);
+
+  // Handle placing a trade
+  const handlePlaceTrade = (tradeData: Omit<Trade, 'id' | 'timestamp' | 'pnl' | 'pnlPercent'>) => {
+    const trade: Trade = {
+      ...tradeData,
+      id: `trade-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      pnl: 0,
+      pnlPercent: 0,
+    };
+
+    addTrade(trade);
+    updatePortfolio();
+    toast.success(`${trade.type} order placed for ${trade.symbol}`);
   };
 
-  const handleAuthSuccess = async (authData: { aadhaarNumber: string; otp: string }) => {
+  const refreshData = async () => {
+    setLoading(true);
     try {
-      await login(authData.aadhaarNumber, authData.otp);
-      setCurrentStep(VotingStep.BALLOT_VIEW);
-    } catch (error) {
-      console.error('Authentication failed:', error);
+      const [pairs, historical, news] = await Promise.all([
+        fetchCurrencyPairs(),
+        fetchHistoricalData(selectedPair),
+        fetchMarketNews()
+      ]);
+      
+      updateCurrencyPairs(pairs);
+      updateHistoricalData(historical);
+      setMarketNews(news);
+      
+      toast.success('Data refreshed');
+    } catch (err) {
+      toast.error('Failed to refresh data');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleVoteComplete = () => {
-    setCurrentStep(VotingStep.CONFIRMATION);
-  };
-
-  const handleViewResults = () => {
-    setCurrentStep(VotingStep.CONFIRMATION);
-  };
-
-  const handleStartNewVoting = () => {
-    clearVotingState();
-    setCurrentStep(VotingStep.LANGUAGE_SELECT);
-  };
-
-  const handleBackToAuth = () => {
-    setCurrentStep(VotingStep.AUTHENTICATION);
-  };
-
-  const handleBackToLanguage = () => {
-    setCurrentStep(VotingStep.LANGUAGE_SELECT);
-  };
-
-  const getStepProgress = () => {
-    const steps = [
-      VotingStep.LANGUAGE_SELECT,
-      VotingStep.AUTHENTICATION,
-      VotingStep.BALLOT_VIEW,
-      VotingStep.CONFIRMATION
-    ];
-    return ((steps.indexOf(currentStep) + 1) / steps.length) * 100;
-  };
+  const openTrades = trades.filter(trade => trade.status === 'OPEN');
+  const closedTrades = trades.filter(trade => trade.status === 'CLOSED');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-saffron-50 via-white to-green-50">
-      {/* Header with System Status */}
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-200">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            {/* Logo and Title */}
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-1">
-                <div className="w-4 h-3 bg-saffron-500 rounded-sm"></div>
-                <div className="w-4 h-3 bg-white border border-gray-300 rounded-sm"></div>
-                <div className="w-4 h-3 bg-green-500 rounded-sm"></div>
-              </div>
-              <h1 className="text-lg font-bold text-gray-900">
-                भारत मतदान / India Voting
-              </h1>
-            </div>
-
-            {/* System Status */}
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
-              {/* Connectivity Status */}
-              <div className="flex items-center space-x-1">
-                {status.isOnline ? (
-                  <Wifi className="w-4 h-4 text-green-500" />
-                ) : (
-                  <WifiOff className="w-4 h-4 text-red-500" />
-                )}
-                <span className="text-xs text-gray-600">
-                  {status.isOnline ? 'Online' : 'Offline'}
-                </span>
-              </div>
-
-              {/* Battery Status (if available) */}
-              {status.batteryLevel && (
-                <div className="flex items-center space-x-1">
-                  <Battery className="w-4 h-4 text-gray-500" />
-                  <span className="text-xs text-gray-600">
-                    {status.batteryLevel}%
-                  </span>
-                </div>
-              )}
-
-              {/* Settings */}
-              <button 
-                className="p-1 text-gray-400 hover:text-gray-600"
-                aria-label="Settings"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Forex Trading Dashboard
+              </h1>
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                Professional Trading Platform
+              </span>
             </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="mt-2">
-            <div className="w-full bg-gray-200 rounded-full h-1">
-              <div 
-                className="bg-saffron-500 h-1 rounded-full transition-all duration-300"
-                style={{ width: `${getStepProgress()}%` }}
-              />
+            
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={refreshData}
+                disabled={isLoading}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+              
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Global Messages */}
-      {(error || success) && (
-        <div className="container mx-auto px-4 pt-4">
-          {error && (
-            <div className="flex items-center space-x-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-lg">
-              <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
-              <span className="text-sm text-red-700">{error}</span>
-              <button
-                onClick={clearMessages}
-                className="ml-auto text-red-500 hover:text-red-700"
-              >
-                ×
-              </button>
+      {/* Portfolio Summary */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center space-x-2">
+              <Wallet className="w-5 h-5 text-blue-500" />
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Balance</span>
             </div>
-          )}
-          
-          {success && (
-            <div className="flex items-center space-x-2 p-3 mb-4 bg-green-50 border border-green-200 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-              <span className="text-sm text-green-700">{success}</span>
-              <button
-                onClick={clearMessages}
-                className="ml-auto text-green-500 hover:text-green-700"
-              >
-                ×
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          {/* Skip Link for Accessibility */}
-          <a href="#main-content" className="skip-link">
-            Skip to main content
-          </a>
-
-          <div id="main-content" className="space-y-8">
-            {/* Language Selection Step */}
-            {currentStep === VotingStep.LANGUAGE_SELECT && (
-              <div className="animate-fade-in">
-                <LanguageSelector
-                  selectedLanguage={language}
-                  onLanguageChange={handleLanguageSelect}
-                  onNext={() => setCurrentStep(VotingStep.AUTHENTICATION)}
-                />
-              </div>
-            )}
-
-            {/* Authentication Step */}
-            {currentStep === VotingStep.AUTHENTICATION && (
-              <div className="animate-fade-in">
-                <AadhaarAuth
-                  onSuccess={handleAuthSuccess}
-                  onBack={handleBackToLanguage}
-                />
-              </div>
-            )}
-
-            {/* Ballot View Step */}
-            {currentStep === VotingStep.BALLOT_VIEW && isAuthenticated && currentElection && (
-              <div className="animate-fade-in">
-                <BallotView
-                  election={currentElection}
-                  onVoteComplete={handleVoteComplete}
-                  onBack={handleBackToAuth}
-                />
-              </div>
-            )}
-
-            {/* Vote Confirmation Step */}
-            {currentStep === VotingStep.CONFIRMATION && voteConfirmation && (
-              <div className="animate-fade-in">
-                <VoteConfirmation
-                  voteId={voteConfirmation}
-                  onViewResults={handleViewResults}
-                  onStartNew={handleStartNewVoting}
-                />
-              </div>
-            )}
-
-            {/* Results View (if viewing results) */}
-            {currentStep === VotingStep.CONFIRMATION && currentElection && !voteConfirmation && (
-              <div className="animate-fade-in">
-                <Results
-                  election={currentElection}
-                  onStartNew={handleStartNewVoting}
-                />
-              </div>
-            )}
-
-            {/* Loading States */}
-            {currentStep === VotingStep.BALLOT_VIEW && !currentElection && (
-              <div className="flex items-center justify-center py-12">
-                <div className="text-center space-y-4">
-                  <div className="w-8 h-8 border-4 border-saffron-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <p className="text-gray-600">Loading election data...</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="mt-16 border-t border-gray-200 bg-gray-50">
-        <div className="container mx-auto px-4 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Election Commission Info */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                Election Commission of India
-              </h3>
-              <p className="text-sm text-gray-600 mb-2">
-                Secure • Transparent • Verifiable
-              </p>
-              <p className="text-xs text-gray-500">
-                Powered by Web3 Technology
-              </p>
-            </div>
-
-            {/* Help & Support */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                Help & Support
-              </h3>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>Helpline: 1950</li>
-                <li>Email: support@eci.gov.in</li>
-                <li>Website: www.eci.gov.in</li>
-              </ul>
-            </div>
-
-            {/* Technical Info */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                System Status
-              </h3>
-              <SystemStatus />
-            </div>
-          </div>
-
-          <div className="border-t border-gray-200 mt-8 pt-4 text-center">
-            <p className="text-xs text-gray-500">
-              © 2024 Election Commission of India. All rights reserved.
+            <p className="text-2xl font-bold text-gray-900 dark:text-white">
+              ${portfolio.balance.toLocaleString()}
             </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center space-x-2">
+              <Activity className="w-5 h-5 text-green-500" />
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Equity</span>
+            </div>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white">
+              ${portfolio.equity.toLocaleString()}
+            </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center space-x-2">
+              {portfolio.totalPnl >= 0 ? (
+                <TrendingUp className="w-5 h-5 text-green-500" />
+              ) : (
+                <TrendingDown className="w-5 h-5 text-red-500" />
+              )}
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-400">P&L</span>
+            </div>
+            <p className={`text-2xl font-bold ${
+              portfolio.totalPnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+            }`}>
+              ${portfolio.totalPnl.toFixed(2)}
+            </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center space-x-2">
+              <Activity className="w-5 h-5 text-purple-500" />
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Open Trades</span>
+            </div>
+            <p className="text-2xl font-bold text-gray-900 dark:text-white">
+              {openTrades.length}
+            </p>
+          </motion.div>
+        </div>
+
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Currency Pairs */}
+          <div className="lg:col-span-1">
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                Currency Pairs
+              </h2>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {currencyPairs.map((pair) => (
+                  <CurrencyPairCard
+                    key={pair.symbol}
+                    pair={pair}
+                    isSelected={pair.symbol === selectedPair}
+                    onClick={() => setSelectedPair(pair.symbol)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Trading Panel */}
+            {selectedPairData && (
+              <TradingPanel
+                symbol={selectedPairData.symbol}
+                currentPrice={selectedPairData.rate}
+                bid={selectedPairData.bid}
+                ask={selectedPairData.ask}
+                balance={portfolio.balance}
+                onPlaceTrade={handlePlaceTrade}
+              />
+            )}
+          </div>
+
+          {/* Main Chart Area */}
+          <div className="lg:col-span-2">
+            <div className="space-y-4">
+              {/* Chart */}
+              <TradingChart
+                data={historicalData}
+                symbol={selectedPair}
+                height={400}
+              />
+
+              {/* Tab Navigation */}
+              <div className="flex space-x-4 border-b border-gray-200 dark:border-gray-600">
+                {[
+                  { id: 'chart', label: 'Technical Analysis', icon: Activity },
+                  { id: 'news', label: 'Market News', icon: News },
+                  { id: 'trades', label: 'Trade History', icon: TrendingUp },
+                ].map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    onClick={() => setActiveTab(id as any)}
+                    className={`flex items-center space-x-2 px-4 py-2 border-b-2 transition-colors ${
+                      activeTab === id
+                        ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Content */}
+              <AnimatePresence mode="wait">
+                {activeTab === 'chart' && (
+                  <motion.div
+                    key="chart"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                  >
+                    <TechnicalIndicators indicators={generateTechnicalSignals(historicalData)} />
+                  </motion.div>
+                )}
+
+                {activeTab === 'news' && (
+                  <motion.div
+                    key="news"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4"
+                  >
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                      Market News
+                    </h3>
+                    <div className="space-y-4">
+                      {marketNews.map((news) => (
+                        <div key={news.id} className="border-b border-gray-200 dark:border-gray-600 pb-4 last:border-b-0">
+                          <div className="flex items-start justify-between mb-2">
+                            <h4 className="font-medium text-gray-900 dark:text-white pr-4">
+                              {news.title}
+                            </h4>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              news.impact === 'HIGH' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                              news.impact === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' :
+                              'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            }`}>
+                              {news.impact}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                            {news.summary}
+                          </p>
+                          <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                            <span>{news.source}</span>
+                            <span>{new Date(news.timestamp).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === 'trades' && (
+                  <motion.div
+                    key="trades"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4"
+                  >
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                      Trade History
+                    </h3>
+                    <div className="space-y-4">
+                      {trades.length === 0 ? (
+                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">
+                          No trades yet. Place your first trade to get started!
+                        </p>
+                      ) : (
+                        trades.slice(-10).reverse().map((trade) => (
+                          <div key={trade.id} className="border-b border-gray-200 dark:border-gray-600 pb-4 last:border-b-0">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <div className="flex items-center space-x-2">
+                                  <span className={`px-2 py-1 text-xs rounded ${
+                                    trade.type === 'BUY' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                  }`}>
+                                    {trade.type}
+                                  </span>
+                                  <span className="font-medium text-gray-900 dark:text-white">
+                                    {trade.symbol}
+                                  </span>
+                                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                                    {trade.amount} lots
+                                  </span>
+                                </div>
+                                <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                  Entry: {trade.entryPrice.toFixed(5)} | Current: {trade.currentPrice.toFixed(5)}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className={`font-medium ${
+                                  trade.pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                                }`}>
+                                  ${trade.pnl.toFixed(2)}
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  {new Date(trade.timestamp).toLocaleString()}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {/* Right Sidebar */}
+          <div className="lg:col-span-1">
+            <TechnicalIndicators indicators={generateTechnicalSignals(historicalData)} />
           </div>
         </div>
-      </footer>
-
-      {/* Accessibility Announcements */}
-      <div 
-        aria-live="polite" 
-        aria-atomic="true" 
-        className="sr-only"
-        id="accessibility-announcements"
-      >
-        {/* Screen reader announcements will be dynamically inserted here */}
-      </div>
-
-      {/* High Contrast Mode */}
-      {accessibility.highContrast && (
-        <style jsx global>{`
-          * {
-            filter: contrast(150%) brightness(110%);
-          }
-        `}</style>
-      )}
-
-      {/* Reduced Motion */}
-      {accessibility.reducedMotion && (
-        <style jsx global>{`
-          *, *::before, *::after {
-            animation-duration: 0.01ms !important;
-            animation-iteration-count: 1 !important;
-            transition-duration: 0.01ms !important;
-            scroll-behavior: auto !important;
-          }
-        `}</style>
-      )}
-    </div>
-  );
-}
-
-// Additional placeholder components that would need to be implemented
-function BallotView({ election, onVoteComplete, onBack }: any) {
-  return (
-    <div className="text-center py-12">
-      <h2 className="text-xl font-bold mb-4">Ballot View</h2>
-      <p className="text-gray-600 mb-6">Election: {election.name}</p>
-      <div className="space-x-4">
-        <button onClick={onBack} className="px-4 py-2 bg-gray-200 rounded">Back</button>
-        <button onClick={onVoteComplete} className="px-4 py-2 bg-saffron-500 text-white rounded">Cast Vote</button>
-      </div>
-    </div>
-  );
-}
-
-function VoteConfirmation({ voteId, onViewResults, onStartNew }: any) {
-  return (
-    <div className="text-center py-12">
-      <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-      <h2 className="text-xl font-bold mb-4">Vote Confirmed!</h2>
-      <p className="text-gray-600 mb-6">Vote ID: {voteId}</p>
-      <div className="space-x-4">
-        <button onClick={onViewResults} className="px-4 py-2 bg-blue-500 text-white rounded">View Results</button>
-        <button onClick={onStartNew} className="px-4 py-2 bg-gray-200 rounded">Start New</button>
-      </div>
-    </div>
-  );
-}
-
-function Results({ election, onStartNew }: any) {
-  return (
-    <div className="text-center py-12">
-      <h2 className="text-xl font-bold mb-4">Election Results</h2>
-      <p className="text-gray-600 mb-6">Results for: {election.name}</p>
-      <button onClick={onStartNew} className="px-4 py-2 bg-saffron-500 text-white rounded">
-        Start New Vote
-      </button>
-    </div>
-  );
-}
-
-function SystemStatus() {
-  const { status } = useSystem();
-  
-  return (
-    <div className="text-sm text-gray-600 space-y-1">
-      <div className="flex items-center justify-between">
-        <span>Network:</span>
-        <span className={status.isOnline ? 'text-green-600' : 'text-red-600'}>
-          {status.isOnline ? 'Connected' : 'Offline'}
-        </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Blockchain:</span>
-        <span className={status.blockchainConnected ? 'text-green-600' : 'text-yellow-600'}>
-          {status.blockchainConnected ? 'Connected' : 'Connecting...'}
-        </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Status:</span>
-        <span className="text-green-600 capitalize">
-          {status.systemHealth}
-        </span>
       </div>
     </div>
   );
