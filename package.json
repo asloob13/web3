@@ -1,7 +1,7 @@
 {
-  "name": "web3-voting-system-india",
+  "name": "forex-trading-dashboard",
   "version": "1.0.0",
-  "description": "Web3-based National Voting System for India - Frontend",
+  "description": "Advanced Forex Trading Dashboard - Real-time data, analysis tools, and trading utilities",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -25,12 +25,12 @@
     "@radix-ui/react-progress": "^1.0.3",
     "@radix-ui/react-select": "^2.0.0",
     "@radix-ui/react-toast": "^1.1.5",
-    "@rainbow-me/rainbowkit": "^1.3.0",
     "@tanstack/react-query": "^5.8.4",
     "@vercel/analytics": "^1.1.1",
+    "axios": "^1.6.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
-    "ethers": "^6.8.1",
+    "date-fns": "^2.30.0",
     "framer-motion": "^10.16.5",
     "lucide-react": "^0.294.0",
     "next": "14.0.3",
@@ -48,8 +48,6 @@
     "tailwind-merge": "^2.0.0",
     "tailwindcss-animate": "^1.0.7",
     "use-sound": "^4.0.1",
-    "viem": "^1.19.9",
-    "wagmi": "^1.4.12",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
